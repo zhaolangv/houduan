@@ -1,0 +1,399 @@
+"""
+测试方案A和B的速度和准确率
+方案A：Vision模型（火山引擎）
+方案B：OCR API + DeepSeek（文本AI）
+方案B2：本地OCR（PaddleOCR）+ DeepSeek（备选）
+"""
+import requests
+import json
+import sys
+import os
+import time
+from statistics import mean
+from typing import Dict, List
+
+# 修复Windows控制台编码问题
+if sys.platform == 'win32':
+    import io
+    sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
+    sys.stderr = io.TextIOWrapper(sys.stderr.buffer, encoding='utf-8')
+
+BASE_URL = 'http://localhost:5000'
+
+def load_test_images(max_images=5):
+    """加载测试图片"""
+    ceshi_dir = 'uploads/ceshi'
+    images = []
+    for file in os.listdir(ceshi_dir):
+        if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+            images.append(os.path.join(ceshi_dir, file))
+            if len(images) >= max_images:
+                break
+    return images
+
+def test_scheme_a_vision(image_path: str) -> Dict:
+    """测试方案A：Vision模型（火山引擎）"""
+    # 设置环境变量强制使用Vision模型
+    original_method = os.environ.get('OCR_METHOD')
+    os.environ['OCR_METHOD'] = 'vision'
+    
+    start = time.time()
+    try:
+        with open(image_path, 'rb') as f:
+            files = {'image': (os.path.basename(image_path), f, 'image/jpeg')}
+            data = {
+                'question_type': 'TEXT',
+                'force_reanalyze': 'true'
+            }
+            response = requests.post(
+                f'{BASE_URL}/api/questions/analyze',
+                files=files,
+                data=data,
+                timeout=60
+            )
+        elapsed = time.time() - start
+        
+        # 恢复环境变量
+        if original_method:
+            os.environ['OCR_METHOD'] = original_method
+        elif 'OCR_METHOD' in os.environ:
+            del os.environ['OCR_METHOD']
+        
+        if response.status_code == 200:
+            result = response.json()
+            return {
+                'success': True,
+                'time': elapsed,
+                'method': result.get('extraction_method', 'unknown'),
+                'question_text': result.get('question_text', ''),
+                'options': result.get('options', []),
+                'options_count': len(result.get('options', [])),
+                'has_question': len(result.get('question_text', '').strip()) > 10,
+                'has_options': len(result.get('options', [])) >= 2,
+                'raw_text_length': len(result.get('raw_text', ''))
+            }
+        else:
+            return {
+                'success': False,
+                'time': elapsed,
+                'error': f'HTTP {response.status_code}',
+                'response_text': response.text[:200] if response.text else ''
+            }
+    except Exception as e:
+        elapsed = time.time() - start
+        # 恢复环境变量
+        if original_method:
+            os.environ['OCR_METHOD'] = original_method
+        elif 'OCR_METHOD' in os.environ:
+            del os.environ['OCR_METHOD']
+        return {
+            'success': False,
+            'time': elapsed,
+            'error': str(e)[:100]
+        }
+
+def test_scheme_b_ocr_api_deepseek(image_path: str) -> Dict:
+    """测试方案B：OCR API + DeepSeek（文本AI）"""
+    # 设置环境变量强制使用OCR API + 文本AI
+    original_method = os.environ.get('OCR_METHOD')
+    os.environ['OCR_METHOD'] = 'ocr_ai'
+    
+    start = time.time()
+    try:
+        with open(image_path, 'rb') as f:
+            files = {'image': (os.path.basename(image_path), f, 'image/jpeg')}
+            data = {
+                'question_type': 'TEXT',
+                'force_reanalyze': 'true'
+            }
+            response = requests.post(
+                f'{BASE_URL}/api/questions/analyze',
+                files=files,
+                data=data,
+                timeout=60
+            )
+        elapsed = time.time() - start
+        
+        # 恢复环境变量
+        if original_method:
+            os.environ['OCR_METHOD'] = original_method
+        elif 'OCR_METHOD' in os.environ:
+            del os.environ['OCR_METHOD']
+        
+        if response.status_code == 200:
+            result = response.json()
+            return {
+                'success': True,
+                'time': elapsed,
+                'method': result.get('extraction_method', 'unknown'),
+                'question_text': result.get('question_text', ''),
+                'options': result.get('options', []),
+                'options_count': len(result.get('options', [])),
+                'has_question': len(result.get('question_text', '').strip()) > 10,
+                'has_options': len(result.get('options', [])) >= 2,
+                'raw_text_length': len(result.get('raw_text', ''))
+            }
+        else:
+            return {
+                'success': False,
+                'time': elapsed,
+                'error': f'HTTP {response.status_code}',
+                'response_text': response.text[:200] if response.text else ''
+            }
+    except Exception as e:
+        elapsed = time.time() - start
+        # 恢复环境变量
+        if original_method:
+            os.environ['OCR_METHOD'] = original_method
+        elif 'OCR_METHOD' in os.environ:
+            del os.environ['OCR_METHOD']
+        return {
+            'success': False,
+            'time': elapsed,
+            'error': str(e)[:100]
+        }
+
+def test_scheme_b2_local_ocr_deepseek(image_path: str) -> Dict:
+    """测试方案B2：本地OCR（PaddleOCR）+ DeepSeek（文本AI）"""
+    # 设置环境变量强制使用本地OCR + 规则过滤（会fallback到AI）
+    original_method = os.environ.get('OCR_METHOD')
+    os.environ['OCR_METHOD'] = 'ocr_rule'
+    
+    start = time.time()
+    try:
+        with open(image_path, 'rb') as f:
+            files = {'image': (os.path.basename(image_path), f, 'image/jpeg')}
+            data = {
+                'question_type': 'TEXT',
+                'force_reanalyze': 'true'
+            }
+            response = requests.post(
+                f'{BASE_URL}/api/questions/analyze',
+                files=files,
+                data=data,
+                timeout=60
+            )
+        elapsed = time.time() - start
+        
+        # 恢复环境变量
+        if original_method:
+            os.environ['OCR_METHOD'] = original_method
+        elif 'OCR_METHOD' in os.environ:
+            del os.environ['OCR_METHOD']
+        
+        if response.status_code == 200:
+            result = response.json()
+            return {
+                'success': True,
+                'time': elapsed,
+                'method': result.get('extraction_method', 'unknown'),
+                'question_text': result.get('question_text', ''),
+                'options': result.get('options', []),
+                'options_count': len(result.get('options', [])),
+                'has_question': len(result.get('question_text', '').strip()) > 10,
+                'has_options': len(result.get('options', [])) >= 2,
+                'raw_text_length': len(result.get('raw_text', ''))
+            }
+        else:
+            return {
+                'success': False,
+                'time': elapsed,
+                'error': f'HTTP {response.status_code}',
+                'response_text': response.text[:200] if response.text else ''
+            }
+    except Exception as e:
+        elapsed = time.time() - start
+        # 恢复环境变量
+        if original_method:
+            os.environ['OCR_METHOD'] = original_method
+        elif 'OCR_METHOD' in os.environ:
+            del os.environ['OCR_METHOD']
+        return {
+            'success': False,
+            'time': elapsed,
+            'error': str(e)[:100]
+        }
+
+def evaluate_accuracy(result: Dict) -> float:
+    """评估准确率"""
+    if not result.get('success'):
+        return 0.0
+    
+    score = 0.0
+    
+    # 有题干：+0.4
+    if result.get('has_question'):
+        score += 0.4
+    
+    # 有选项：+0.4
+    if result.get('has_options'):
+        score += 0.4
+    
+    # 选项数量合理（2-6个）：+0.2
+    options_count = result.get('options_count', 0)
+    if 2 <= options_count <= 6:
+        score += 0.2
+    
+    return score
+
+def print_scheme_results(scheme_name: str, results: List[Dict]):
+    """打印方案测试结果"""
+    print(f"\n{'='*70}")
+    print(f"📊 {scheme_name} - 测试结果")
+    print(f"{'='*70}")
+    
+    success_results = [r for r in results if r.get('success')]
+    failed_results = [r for r in results if not r.get('success')]
+    
+    if success_results:
+        times = [r['time'] for r in success_results]
+        accuracies = [evaluate_accuracy(r) for r in success_results]
+        
+        print(f"✅ 成功: {len(success_results)}/{len(results)} ({len(success_results)/len(results)*100:.1f}%)")
+        print(f"❌ 失败: {len(failed_results)}/{len(results)}")
+        print(f"\n⏱️  速度统计:")
+        print(f"  平均时间: {mean(times):.2f}秒")
+        print(f"  最快:     {min(times):.2f}秒")
+        print(f"  最慢:     {max(times):.2f}秒")
+        print(f"\n🎯 准确率统计:")
+        print(f"  平均准确率: {mean(accuracies):.2%}")
+        print(f"  最高准确率: {max(accuracies):.2%}")
+        print(f"  最低准确率: {min(accuracies):.2%}")
+        
+        # 详细结果
+        print(f"\n📝 详细结果:")
+        for i, r in enumerate(success_results, 1):
+            method = r.get('method', 'unknown')
+            options_count = r.get('options_count', 0)
+            accuracy = evaluate_accuracy(r)
+            question_preview = r.get('question_text', '')[:40] + '...' if len(r.get('question_text', '')) > 40 else r.get('question_text', '')
+            print(f"  {i}. {r['time']:.2f}秒 - {method}, {options_count}选项, 准确率{accuracy:.2%}")
+            if question_preview:
+                print(f"     题干: {question_preview}")
+    else:
+        print(f"❌ 全部失败")
+        for i, r in enumerate(failed_results, 1):
+            error_msg = r.get('error', 'unknown')
+            if r.get('response_text'):
+                error_msg += f" ({r['response_text'][:50]})"
+            print(f"  {i}. {r.get('time', 0):.2f}秒 - {error_msg}")
+
+def main():
+    print("="*70)
+    print("🚀 方案A和B速度和准确率对比测试")
+    print("="*70)
+    
+    # 加载测试图片
+    test_images = load_test_images(5)  # 测试5张图片
+    
+    if not test_images:
+        print("❌ 未找到测试图片")
+        return
+    
+    print(f"📷 测试图片数: {len(test_images)}")
+    for img in test_images:
+        file_size = os.path.getsize(img) / 1024
+        print(f"  - {os.path.basename(img)} ({file_size:.2f} KB)")
+    
+    # 测试方案A：Vision模型
+    print(f"\n{'='*70}")
+    print("📊 测试方案A：Vision模型（火山引擎）")
+    print(f"{'='*70}")
+    scheme_a_results = []
+    for i, img_path in enumerate(test_images, 1):
+        print(f"  测试图片 {i}/{len(test_images)}...", end=' ', flush=True)
+        result = test_scheme_a_vision(img_path)
+        scheme_a_results.append(result)
+        if result.get('success'):
+            print(f"✅ {result['time']:.2f}秒 - {result.get('method', 'unknown')}")
+        else:
+            print(f"❌ {result.get('error', 'unknown')}")
+    
+    print_scheme_results("方案A：Vision模型", scheme_a_results)
+    
+    # 测试方案B：OCR API + DeepSeek
+    print(f"\n{'='*70}")
+    print("📊 测试方案B：OCR API + DeepSeek（文本AI）")
+    print(f"{'='*70}")
+    scheme_b_results = []
+    for i, img_path in enumerate(test_images, 1):
+        print(f"  测试图片 {i}/{len(test_images)}...", end=' ', flush=True)
+        result = test_scheme_b_ocr_api_deepseek(img_path)
+        scheme_b_results.append(result)
+        if result.get('success'):
+            print(f"✅ {result['time']:.2f}秒 - {result.get('method', 'unknown')}")
+        else:
+            print(f"❌ {result.get('error', 'unknown')}")
+    
+    print_scheme_results("方案B：OCR API + DeepSeek", scheme_b_results)
+    
+    # 测试方案B2：本地OCR + DeepSeek（如果可用）
+    print(f"\n{'='*70}")
+    print("📊 测试方案B2：本地OCR（PaddleOCR）+ DeepSeek（备选）")
+    print(f"{'='*70}")
+    scheme_b2_results = []
+    for i, img_path in enumerate(test_images, 1):
+        print(f"  测试图片 {i}/{len(test_images)}...", end=' ', flush=True)
+        result = test_scheme_b2_local_ocr_deepseek(img_path)
+        scheme_b2_results.append(result)
+        if result.get('success'):
+            print(f"✅ {result['time']:.2f}秒 - {result.get('method', 'unknown')}")
+        else:
+            print(f"❌ {result.get('error', 'unknown')}")
+    
+    print_scheme_results("方案B2：本地OCR + DeepSeek", scheme_b2_results)
+    
+    # 总结对比
+    print(f"\n{'='*70}")
+    print("📊 方案对比总结")
+    print(f"{'='*70}")
+    
+    schemes = [
+        ("方案A：Vision模型", scheme_a_results),
+        ("方案B：OCR API + DeepSeek", scheme_b_results),
+        ("方案B2：本地OCR + DeepSeek", scheme_b2_results)
+    ]
+    
+    summary_data = []
+    for name, results in schemes:
+        success_results = [r for r in results if r.get('success')]
+        if success_results:
+            times = [r['time'] for r in success_results]
+            accuracies = [evaluate_accuracy(r) for r in success_results]
+            
+            summary_data.append({
+                'name': name,
+                'avg_time': mean(times),
+                'min_time': min(times),
+                'max_time': max(times),
+                'avg_accuracy': mean(accuracies),
+                'success_rate': len(success_results) / len(results) * 100,
+                'success_count': len(success_results),
+                'total_count': len(results)
+            })
+    
+    # 打印对比表
+    if summary_data:
+        print(f"\n{'方案':<35} {'平均速度':<12} {'速度范围':<15} {'平均准确率':<12} {'成功率':<10}")
+        print(f"{'-'*85}")
+        for data in summary_data:
+            time_range = f"{data['min_time']:.1f}-{data['max_time']:.1f}秒"
+            print(f"{data['name']:<35} {data['avg_time']:>6.2f}秒    {time_range:<15} {data['avg_accuracy']:>8.2%}    {data['success_count']}/{data['total_count']} ({data['success_rate']:.1f}%)")
+        
+        # 找出最佳方案
+        if summary_data:
+            fastest = min(summary_data, key=lambda x: x['avg_time'])
+            most_accurate = max(summary_data, key=lambda x: x['avg_accuracy'])
+            best_balanced = min(summary_data, key=lambda x: x['avg_time'] / max(x['avg_accuracy'], 0.01))
+            
+            print(f"\n🏆 最快方案: {fastest['name']} ({fastest['avg_time']:.2f}秒)")
+            print(f"🎯 最准确方案: {most_accurate['name']} ({most_accurate['avg_accuracy']:.2%})")
+            print(f"⭐ 最佳平衡方案: {best_balanced['name']} (速度{best_balanced['avg_time']:.2f}秒, 准确率{best_balanced['avg_accuracy']:.2%})")
+    else:
+        print("\n⚠️  所有方案都失败了，请检查代码和配置")
+    
+    print(f"\n{'='*70}")
+
+if __name__ == '__main__':
+    main()
+

@@ -1,0 +1,23 @@
+flask==3.0.0
+flask-sqlalchemy==3.1.1
+Pillow==10.1.0
+imagehash==4.3.1
+requests==2.31.0
+python-dotenv==1.0.0
+openai==2.8.1
+psycopg2-binary==2.9.9
+pymysql>=1.1.0  # MySQL数据库驱动（备选方案）
+sentence-transformers==2.2.2
+torch==2.1.0
+torchvision==0.16.0
+numpy==1.24.3
+tkinterdnd2==0.3.0
+supabase>=2.0.0  # Supabase存储服务（可选，用于上传图片到云端）
+gunicorn>=21.2.0  # 生产环境WSGI服务器（必需）
+flask-cors>=4.0.0  # CORS支持（可选，用于跨域请求）
+# OCR支持（可选，按需安装）
+# paddleocr>=2.7.0  # 推荐：中文OCR效果好，但体积较大
+# pytesseract>=0.3.10  # 备选：需要单独安装Tesseract软件
+# 图片描述（可选）
+# transformers>=4.30.0  # 用于BLIP图片描述模型
+
