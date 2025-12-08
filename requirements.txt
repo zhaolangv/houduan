@@ -8,9 +8,9 @@ openai==2.8.1
 psycopg2-binary==2.9.9
 pymysql>=1.1.0  # MySQL数据库驱动（备选方案）
 sentence-transformers==2.2.2
-torch==2.1.0
-torchvision==0.16.0
-numpy==1.24.3
+torch>=2.2.0,<3.0.0  # 更新为可用版本（2.1.0已不可用）
+torchvision>=0.17.0,<1.0.0  # 与torch版本兼容
+numpy>=1.24.0,<2.0.0  # 使用更灵活的版本约束
 tkinterdnd2==0.3.0
 supabase>=2.0.0  # Supabase存储服务（可选，用于上传图片到云端）
 gunicorn>=21.2.0  # 生产环境WSGI服务器（必需）
