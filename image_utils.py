@@ -9,7 +9,14 @@ from PIL import Image
 import imagehash
 import numpy as np
 import logging
-from embedding_service import get_embedding_service
+
+# 可选导入：如果embedding_service不可用，embedding功能将不可用
+try:
+    from embedding_service import get_embedding_service
+    EMBEDDING_AVAILABLE = True
+except ImportError:
+    EMBEDDING_AVAILABLE = False
+    get_embedding_service = None
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -94,9 +101,15 @@ def calculate_image_embedding(image_path_or_url):
     Returns:
         numpy.ndarray: 特征向量（归一化后的向量），如果失败返回None
     """
+    if not EMBEDDING_AVAILABLE:
+        logger.warning("[IMAGE] Embedding功能不可用（torch未安装）")
+        return None
+    
     logger.info(f"[IMAGE] 开始提取Embedding: {image_path_or_url[:80]}...")
     try:
         embedding_service = get_embedding_service()
+        if embedding_service is None:
+            return None
         embedding = embedding_service.extract_embedding(image_path_or_url)
         if embedding is not None:
             logger.info(f"[IMAGE] Embedding提取成功: shape={embedding.shape}, dtype={embedding.dtype}")
@@ -127,9 +140,13 @@ def calculate_all_features(image_path_or_url):
     
     # 将embedding转换为列表格式
     embedding_list = None
-    if embedding is not None:
-        embedding_service = get_embedding_service()
-        embedding_list = embedding_service.embedding_to_list(embedding)
+    if embedding is not None and EMBEDDING_AVAILABLE:
+        try:
+            embedding_service = get_embedding_service()
+            if embedding_service is not None:
+                embedding_list = embedding_service.embedding_to_list(embedding)
+        except Exception as e:
+            logger.warning(f"[IMAGE] 转换embedding到列表失败: {e}")
     
     return {
         'md5_hash': md5_hash,
@@ -195,8 +212,18 @@ def find_similar_image_by_embedding(embedding, similarity_threshold=0.85, db_ses
         logger.debug("[IMAGE] embedding为None，返回")
         return None, 0.0
     
+    if not EMBEDDING_AVAILABLE:
+        logger.warning("[IMAGE] Embedding功能不可用，无法查找相似图片")
+        return None, 0.0
+    
     logger.info(f"[IMAGE] embedding类型: {type(embedding)}, shape={embedding.shape if hasattr(embedding, 'shape') else 'N/A'}")
-    embedding_service = get_embedding_service()
+    try:
+        embedding_service = get_embedding_service()
+        if embedding_service is None:
+            return None, 0.0
+    except Exception as e:
+        logger.warning(f"[IMAGE] 获取embedding服务失败: {e}")
+        return None, 0.0
     
     # 获取所有有Embedding的题目
     questions = db_session.query(Question).filter(

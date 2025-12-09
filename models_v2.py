@@ -119,3 +119,42 @@ class AnswerVersion(db.Model):
     def __repr__(self):
         return f'<AnswerVersion {self.id}: {self.source_name}>'
 
+
+class UserSession(db.Model):
+    """匿名用户会话表（用于统计留存率，无需注册）"""
+    __tablename__ = 'user_sessions'
+    
+    id = db.Column(DB_UUID, primary_key=True, default=generate_uuid)
+    device_id = db.Column(String(100), nullable=False, index=True, comment='设备ID（Android ID、IMEI或UUID）')
+    first_seen_date = db.Column(db.Date, nullable=False, index=True, comment='首次使用日期')
+    last_active_date = db.Column(db.Date, nullable=False, index=True, comment='最后活跃日期')
+    total_sessions = db.Column(Integer, default=1, comment='总会话数')
+    total_questions = db.Column(Integer, default=0, comment='总题目数')
+    device_info = db.Column(JSONType(), comment='设备信息（平台、版本等）')
+    app_version = db.Column(String(20), comment='应用版本号')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    def __repr__(self):
+        return f'<UserSession {self.device_id}: {self.first_seen_date}>'
+
+
+class DailyActiveUser(db.Model):
+    """每日活跃用户表（用于计算留存率）"""
+    __tablename__ = 'daily_active_users'
+    
+    id = db.Column(DB_UUID, primary_key=True, default=generate_uuid)
+    device_id = db.Column(String(100), nullable=False, index=True, comment='设备ID')
+    date = db.Column(db.Date, nullable=False, index=True, comment='日期')
+    question_count = db.Column(Integer, default=0, comment='当日题目数')
+    session_count = db.Column(Integer, default=1, comment='当日会话数')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # 唯一约束：同一设备同一日期只能有一条记录
+    __table_args__ = (
+        db.UniqueConstraint('device_id', 'date', name='uq_device_date'),
+    )
+    
+    def __repr__(self):
+        return f'<DailyActiveUser {self.device_id}: {self.date}>'
+

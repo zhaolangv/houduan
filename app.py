@@ -2,7 +2,7 @@
 Flask应用主文件
 """
 from flask import Flask, request, jsonify
-from models_v2 import db, Question, AnswerVersion
+from models_v2 import db, Question, AnswerVersion, UserSession, DailyActiveUser
 from question_service_v2 import QuestionService
 import os
 import sys
@@ -248,13 +248,86 @@ def test_database_connection():
 # 初始化题目服务
 question_service = QuestionService()
 
+# 初始化用户统计服务
+from user_statistics_service import get_user_statistics_service
+user_statistics_service = get_user_statistics_service()
+
 # 文件上传配置
 UPLOAD_FOLDER = 'uploads'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'bmp'}
 os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
+# APK文件配置
+APK_FOLDER = 'apk'
+os.makedirs(APK_FOLDER, exist_ok=True)
+APK_VERSION_FILE = os.path.join(APK_FOLDER, 'version.json')  # 存储APK版本信息
+
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def _check_version_update(client_version, server_version):
+    """
+    检查客户端版本是否需要更新
+    
+    Args:
+        client_version: 客户端版本号（如 "1.0.0"）
+        server_version: 服务端版本号（如 "2.0.0"）
+        
+    Returns:
+        dict: 更新信息
+    """
+    import json
+    
+    # 默认更新信息
+    update_info = {
+        'required': False,
+        'latest_version': server_version,
+        'download_url': '/api/apk/download',
+        'release_notes': ''
+    }
+    
+    # 如果没有提供客户端版本，不检查更新
+    if not client_version:
+        return update_info
+    
+    # 读取APK版本信息（如果存在）
+    apk_info = {}
+    if os.path.exists(APK_VERSION_FILE):
+        try:
+            with open(APK_VERSION_FILE, 'r', encoding='utf-8') as f:
+                apk_info = json.load(f)
+                if 'version' in apk_info:
+                    update_info['latest_version'] = apk_info['version']
+                if 'release_notes' in apk_info:
+                    update_info['release_notes'] = apk_info['release_notes']
+        except Exception as e:
+            logger.warning(f"[API] 读取APK版本信息失败: {e}")
+    
+    # 简单的版本比较（支持语义化版本号 x.y.z）
+    try:
+        client_parts = [int(x) for x in client_version.split('.')]
+        server_parts = [int(x) for x in update_info['latest_version'].split('.')]
+        
+        # 补齐版本号长度
+        max_len = max(len(client_parts), len(server_parts))
+        client_parts.extend([0] * (max_len - len(client_parts)))
+        server_parts.extend([0] * (max_len - len(server_parts)))
+        
+        # 比较版本号
+        for i in range(max_len):
+            if server_parts[i] > client_parts[i]:
+                update_info['required'] = True
+                break
+            elif server_parts[i] < client_parts[i]:
+                break
+    except Exception as e:
+        logger.warning(f"[API] 版本号比较失败: {e}，假设需要更新")
+        # 如果版本号格式不正确，假设需要更新
+        if client_version != update_info['latest_version']:
+            update_info['required'] = True
+    
+    return update_info
 
 
 @app.route('/api/questions/analyze', methods=['POST'])
@@ -1598,7 +1671,7 @@ def test_api():
     返回简单的JSON响应，包含服务状态和时间戳
     不需要数据库查询，快速响应
     """
-    from datetime import datetime
+    from datetime import datetime, timedelta
     
     try:
         # 获取客户端IP
@@ -1620,6 +1693,8 @@ def test_api():
             'client_ip': client_ip,
             'endpoints': {
                 'test': '/api/test',
+                'version': '/api/version',
+                'health': '/api/health',
                 'stats': '/api/stats',
                 'analyze': '/api/questions/analyze',
                 'analyze_batch': '/api/questions/analyze/batch',
@@ -1628,7 +1703,13 @@ def test_api():
                 'task_status': '/api/tasks/<task_id>/status',
                 'task_result': '/api/tasks/<task_id>/result',
                 'detail': '/api/questions/<question_id>/detail',
-                'upload': '/api/upload'
+                'upload': '/api/upload',
+                'apk_download': '/api/apk/download',
+                'apk_upload': '/api/apk/upload',
+                'apk_info': '/api/apk/info',
+                'user_stats': '/api/users/stats',
+                'user_retention': '/api/users/retention',
+                'user_cohort': '/api/users/cohort'
             }
         }
         
@@ -1645,6 +1726,405 @@ def test_api():
         }), 500
 
 
+@app.route('/api/version', methods=['GET'])
+def get_version():
+    """
+    获取应用版本信息接口
+    
+    返回应用版本、API版本、构建信息等
+    用于前端检查后端版本兼容性
+    
+    请求参数（可选）：
+    - client_version: 客户端版本号（如 "1.0.0"）
+    
+    返回：
+    {
+        "success": true,
+        "version": {
+            "app_version": "2.0.0",
+            "api_version": "2.0",
+            "build_time": "2025-01-07T12:00:00",
+            "git_commit": "abc123..." (如果有),
+            "git_branch": "main" (如果有),
+            "python_version": "3.11.0",
+            "flask_version": "3.0.0"
+        },
+        "update": {
+            "required": true/false,  // 是否需要更新
+            "latest_version": "2.0.0",  // 最新版本
+            "download_url": "/api/apk/download",  // APK下载链接
+            "release_notes": "更新说明"  // 更新说明
+        },
+        "service": "公考题库分析服务",
+        "status": "online"
+    }
+    """
+    import sys
+    import platform
+    from datetime import datetime, timedelta
+    
+    try:
+        # 获取应用版本
+        app_version = "2.0.0"
+        api_version = "2.0"
+        
+        # 获取客户端版本（如果提供）
+        client_version = request.args.get('client_version', '')
+        
+        # 检查是否需要更新
+        update_info = _check_version_update(client_version, app_version)
+        
+        # 获取Python版本
+        python_version = f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+        
+        # 获取Flask版本
+        try:
+            import flask
+            flask_version = flask.__version__
+        except:
+            flask_version = "unknown"
+        
+        # 获取Git信息（如果可用）
+        git_info = {}
+        try:
+            import subprocess
+            import os
+            
+            # 检查是否在Git仓库中
+            if os.path.exists('.git'):
+                try:
+                    # 获取Git commit hash
+                    commit_hash = subprocess.check_output(
+                        ['git', 'rev-parse', '--short', 'HEAD'],
+                        stderr=subprocess.DEVNULL
+                    ).decode('utf-8').strip()
+                    git_info['commit'] = commit_hash
+                except:
+                    pass
+                
+                try:
+                    # 获取Git分支
+                    branch = subprocess.check_output(
+                        ['git', 'rev-parse', '--abbrev-ref', 'HEAD'],
+                        stderr=subprocess.DEVNULL
+                    ).decode('utf-8').strip()
+                    git_info['branch'] = branch
+                except:
+                    pass
+                
+                try:
+                    # 获取最后提交时间
+                    commit_time = subprocess.check_output(
+                        ['git', 'log', '-1', '--format=%ci'],
+                        stderr=subprocess.DEVNULL
+                    ).decode('utf-8').strip()
+                    git_info['last_commit_time'] = commit_time
+                except:
+                    pass
+        except:
+            pass
+        
+        # 构建版本信息
+        version_info = {
+            'app_version': app_version,
+            'api_version': api_version,
+            'build_time': datetime.now().isoformat(),
+            'python_version': python_version,
+            'flask_version': flask_version,
+            'platform': platform.system(),
+            'platform_version': platform.version()
+        }
+        
+        # 添加Git信息（如果有）
+        if git_info:
+            version_info.update(git_info)
+        
+        response_data = {
+            'success': True,
+            'version': version_info,
+            'update': update_info,
+            'service': '公考题库分析服务',
+            'status': 'online',
+            'timestamp': datetime.now().isoformat()
+        }
+        
+        if client_version:
+            logger.info(f"[API] 📦 版本检查 - 客户端: {client_version}, 服务端: {app_version}, 需要更新: {update_info['required']}")
+        else:
+            logger.info(f"[API] 📦 版本信息查询 - 版本: {app_version}, API: {api_version}")
+        
+        # 自动追踪用户活动（仅在版本验证时记录）
+        try:
+            device_id = request.headers.get('X-Device-ID') or request.args.get('device_id')
+            app_version_param = request.headers.get('X-App-Version') or request.args.get('app_version') or client_version
+            
+            if device_id:
+                device_id = user_statistics_service.get_or_create_device_id(device_id)
+                
+                # 获取设备信息
+                device_info = {
+                    'user_agent': request.headers.get('User-Agent', ''),
+                    'ip': request.remote_addr,
+                    'platform': platform.system()
+                }
+                
+                # 记录用户活动（版本检查通常表示用户打开应用）
+                user_statistics_service.track_user_activity(
+                    device_id=device_id,
+                    device_info=device_info,
+                    app_version=app_version_param,
+                    question_count=0  # 版本检查不涉及题目分析
+                )
+                logger.info(f"[API] 📊 用户活动已记录: {device_id}")
+        except Exception as e:
+            logger.warning(f"[API] 用户活动追踪失败（不影响主流程）: {e}")
+        
+        return jsonify(response_data)
+    
+    except Exception as e:
+        logger.error(f"[API] ❌ 获取版本信息出错: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'version': {
+                'app_version': '2.0.0',
+                'api_version': '2.0',
+                'status': 'error'
+            },
+            'timestamp': datetime.now().isoformat()
+        }), 500
+
+
+@app.route('/api/apk/download', methods=['GET'])
+def download_apk():
+    """
+    APK下载接口
+    
+    返回最新的APK文件
+    
+    返回：
+    - 如果APK存在：返回APK文件
+    - 如果APK不存在：返回404错误
+    """
+    import json
+    from flask import send_file, abort
+    
+    try:
+        # 读取APK版本信息
+        apk_info = {}
+        apk_filename = None
+        
+        if os.path.exists(APK_VERSION_FILE):
+            try:
+                with open(APK_VERSION_FILE, 'r', encoding='utf-8') as f:
+                    apk_info = json.load(f)
+                    apk_filename = apk_info.get('filename')
+            except Exception as e:
+                logger.error(f"[API] ❌ 读取APK版本信息失败: {e}")
+        
+        # 如果没有指定文件名，尝试查找apk文件夹中的第一个.apk文件
+        if not apk_filename:
+            apk_files = [f for f in os.listdir(APK_FOLDER) if f.endswith('.apk')]
+            if apk_files:
+                apk_filename = apk_files[0]  # 使用第一个找到的APK文件
+                logger.info(f"[API] 自动找到APK文件: {apk_filename}")
+        
+        if not apk_filename:
+            logger.warning("[API] ❌ 未找到APK文件")
+            return jsonify({
+                'success': False,
+                'error': 'APK文件不存在',
+                'code': 404
+            }), 404
+        
+        apk_path = os.path.join(APK_FOLDER, apk_filename)
+        
+        if not os.path.exists(apk_path):
+            logger.warning(f"[API] ❌ APK文件不存在: {apk_path}")
+            return jsonify({
+                'success': False,
+                'error': 'APK文件不存在',
+                'code': 404
+            }), 404
+        
+        logger.info(f"[API] 📥 APK下载请求: {apk_filename}")
+        
+        # 返回APK文件
+        return send_file(
+            apk_path,
+            mimetype='application/vnd.android.package-archive',
+            as_attachment=True,
+            download_name=apk_filename
+        )
+    
+    except Exception as e:
+        logger.error(f"[API] ❌ APK下载失败: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'code': 500
+        }), 500
+
+
+@app.route('/api/apk/upload', methods=['POST'])
+def upload_apk():
+    """
+    APK上传接口（管理员用）
+    
+    上传新的APK文件并更新版本信息
+    
+    请求参数（multipart/form-data）：
+    - file: APK文件（必需）
+    - version: 版本号（如 "2.0.0"）（必需）
+    - release_notes: 更新说明（可选）
+    
+    返回：
+    {
+        "success": true,
+        "message": "APK上传成功",
+        "version": "2.0.0",
+        "filename": "app-v2.0.0.apk"
+    }
+    """
+    import json
+    from datetime import datetime, timedelta
+    
+    try:
+        # 检查是否有文件
+        if 'file' not in request.files:
+            return jsonify({
+                'success': False,
+                'error': '没有文件',
+                'code': 400
+            }), 400
+        
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({
+                'success': False,
+                'error': '文件名为空',
+                'code': 400
+            }), 400
+        
+        # 检查文件扩展名
+        if not file.filename.lower().endswith('.apk'):
+            return jsonify({
+                'success': False,
+                'error': '文件必须是APK格式',
+                'code': 400
+            }), 400
+        
+        # 获取版本号和更新说明
+        version = request.form.get('version', '').strip()
+        if not version:
+            return jsonify({
+                'success': False,
+                'error': '版本号不能为空',
+                'code': 400
+            }), 400
+        
+        release_notes = request.form.get('release_notes', '').strip()
+        
+        # 生成安全的文件名
+        safe_filename = secure_filename(file.filename)
+        # 如果文件名不包含版本号，添加版本号
+        if version not in safe_filename:
+            name, ext = os.path.splitext(safe_filename)
+            safe_filename = f"{name}-v{version}{ext}"
+        
+        apk_path = os.path.join(APK_FOLDER, safe_filename)
+        
+        # 保存APK文件
+        file.save(apk_path)
+        logger.info(f"[API] ✅ APK文件已保存: {apk_path}")
+        
+        # 更新版本信息文件
+        apk_info = {
+            'version': version,
+            'filename': safe_filename,
+            'release_notes': release_notes,
+            'upload_time': datetime.now().isoformat(),
+            'file_size': os.path.getsize(apk_path)
+        }
+        
+        with open(APK_VERSION_FILE, 'w', encoding='utf-8') as f:
+            json.dump(apk_info, f, indent=2, ensure_ascii=False)
+        
+        logger.info(f"[API] ✅ APK版本信息已更新: {version}")
+        
+        return jsonify({
+            'success': True,
+            'message': 'APK上传成功',
+            'version': version,
+            'filename': safe_filename,
+            'file_size': apk_info['file_size']
+        })
+    
+    except Exception as e:
+        logger.error(f"[API] ❌ APK上传失败: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'code': 500
+        }), 500
+
+
+@app.route('/api/apk/info', methods=['GET'])
+def get_apk_info():
+    """
+    获取APK信息接口
+    
+    返回当前APK的版本信息和下载链接
+    
+    返回：
+    {
+        "success": true,
+        "apk": {
+            "version": "2.0.0",
+            "filename": "app-v2.0.0.apk",
+            "release_notes": "更新说明",
+            "upload_time": "2025-01-07T12:00:00",
+            "file_size": 12345678,
+            "download_url": "/api/apk/download"
+        }
+    }
+    """
+    import json
+    
+    try:
+        apk_info = {}
+        
+        if os.path.exists(APK_VERSION_FILE):
+            try:
+                with open(APK_VERSION_FILE, 'r', encoding='utf-8') as f:
+                    apk_info = json.load(f)
+            except Exception as e:
+                logger.error(f"[API] ❌ 读取APK信息失败: {e}")
+        
+        if not apk_info:
+            return jsonify({
+                'success': False,
+                'error': 'APK信息不存在',
+                'code': 404
+            }), 404
+        
+        # 添加下载链接
+        apk_info['download_url'] = '/api/apk/download'
+        
+        return jsonify({
+            'success': True,
+            'apk': apk_info
+        })
+    
+    except Exception as e:
+        logger.error(f"[API] ❌ 获取APK信息失败: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'code': 500
+        }), 500
+
+
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """
@@ -1652,7 +2132,7 @@ def health_check():
     
     返回服务健康状态，包括数据库连接状态
     """
-    from datetime import datetime
+    from datetime import datetime, timedelta
     
     try:
         health_status = {
@@ -1836,7 +2316,7 @@ def health_check():
 @app.route('/api/stats', methods=['GET'])
 def get_stats():
     """
-    获取统计信息
+    获取统计信息（题目和答案版本）
     """
     try:
         logger.info("[API] 📊 获取统计信息...")
@@ -1855,6 +2335,187 @@ def get_stats():
         })
     except Exception as e:
         logger.error(f"[API] ❌ 获取统计信息出错: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/users/stats', methods=['GET'])
+def get_user_statistics():
+    """
+    获取用户统计数据（留存率、DAU等）
+    
+    请求参数（可选）:
+    - days: 统计最近多少天（默认30天）
+    
+    返回：
+    {
+        "success": true,
+        "data": {
+            "total_users": 1000,
+            "active_users": 500,
+            "new_users": 50,
+            "avg_dau": 200.5,
+            "daily_active_users": [...]
+        }
+    }
+    """
+    try:
+        days = int(request.args.get('days', 30))
+        days = max(1, min(days, 365))  # 限制在1-365天之间
+        
+        logger.info(f"[API] 📊 获取用户统计数据（最近{days}天）...")
+        
+        stats = user_statistics_service.get_user_statistics(days=days)
+        
+        if 'error' in stats:
+            return jsonify({
+                'success': False,
+                'error': stats['error']
+            }), 500
+        
+        logger.info(f"[API]    - 总用户数: {stats.get('total_users', 0)}")
+        logger.info(f"[API]    - 活跃用户数: {stats.get('active_users', 0)}")
+        logger.info(f"[API]    - 新增用户数: {stats.get('new_users', 0)}")
+        
+        return jsonify({
+            'success': True,
+            'data': stats
+        })
+    except Exception as e:
+        logger.error(f"[API] ❌ 获取用户统计数据出错: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/users/retention', methods=['GET'])
+def get_retention_rate():
+    """
+    获取留存率数据
+    
+    请求参数（可选）:
+    - start_date: 起始日期（YYYY-MM-DD格式，默认：7天前）
+    - days: 计算多少天的留存率（默认7天）
+    
+    返回：
+    {
+        "success": true,
+        "data": {
+            "start_date": "2025-01-01",
+            "new_users": 100,
+            "retention_data": [
+                {
+                    "day": 0,
+                    "date": "2025-01-01",
+                    "retained_users": 100,
+                    "retention_rate": 100.0
+                },
+                ...
+            ]
+        }
+    }
+    """
+    try:
+        from datetime import datetime as dt, date, timedelta
+        
+        start_date_str = request.args.get('start_date')
+        if start_date_str:
+            start_date = dt.strptime(start_date_str, '%Y-%m-%d').date()
+        else:
+            days = int(request.args.get('days', 7))
+            start_date = date.today() - timedelta(days=days)
+        
+        days = int(request.args.get('days', 7))
+        days = max(1, min(days, 90))  # 限制在1-90天之间
+        
+        logger.info(f"[API] 📊 计算留存率（起始日期: {start_date}, 追踪{days}天）...")
+        
+        retention_data = user_statistics_service.calculate_retention_rate(
+            start_date=start_date,
+            days=days
+        )
+        
+        if 'error' in retention_data:
+            return jsonify({
+                'success': False,
+                'error': retention_data['error']
+            }), 500
+        
+        logger.info(f"[API]    - 新增用户数: {retention_data.get('new_users', 0)}")
+        
+        return jsonify({
+            'success': True,
+            'data': retention_data
+        })
+    except ValueError as e:
+        logger.error(f"[API] ❌ 日期格式错误: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'日期格式错误，请使用YYYY-MM-DD格式: {str(e)}'
+        }), 400
+    except Exception as e:
+        logger.error(f"[API] ❌ 计算留存率出错: {e}", exc_info=True)
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
+@app.route('/api/users/cohort', methods=['GET'])
+def get_cohort_retention():
+    """
+    获取Cohort留存率（按首次使用日期分组）
+    
+    请求参数（可选）:
+    - cohort_days: 计算多少天的cohort（默认7天）
+    - retention_days: 追踪多少天的留存（默认30天）
+    
+    返回：
+    {
+        "success": true,
+        "data": {
+            "cohorts": [
+                {
+                    "cohort_date": "2025-01-01",
+                    "new_users": 100,
+                    "retention_data": [...]
+                },
+                ...
+            ]
+        }
+    }
+    """
+    try:
+        cohort_days = int(request.args.get('cohort_days', 7))
+        retention_days = int(request.args.get('retention_days', 30))
+        
+        cohort_days = max(1, min(cohort_days, 30))  # 限制在1-30天
+        retention_days = max(1, min(retention_days, 90))  # 限制在1-90天
+        
+        logger.info(f"[API] 📊 计算Cohort留存率（cohort_days: {cohort_days}, retention_days: {retention_days}）...")
+        
+        cohort_data = user_statistics_service.get_cohort_retention(
+            cohort_days=cohort_days,
+            retention_days=retention_days
+        )
+        
+        if 'error' in cohort_data:
+            return jsonify({
+                'success': False,
+                'error': cohort_data['error']
+            }), 500
+        
+        logger.info(f"[API]    - Cohort数量: {len(cohort_data.get('cohorts', []))}")
+        
+        return jsonify({
+            'success': True,
+            'data': cohort_data
+        })
+    except Exception as e:
+        logger.error(f"[API] ❌ 计算Cohort留存率出错: {e}", exc_info=True)
         return jsonify({
             'success': False,
             'error': str(e)

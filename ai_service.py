@@ -7,10 +7,17 @@ import logging
 from openai import OpenAI
 from models_v2 import db, Question, AnswerVersion
 from image_utils import calculate_all_features, find_similar_image
-from embedding_service import get_embedding_service
 from ocr_service import get_ocr_service
 from image_description_service import get_image_description_service
 import imagehash
+
+# 可选导入：如果embedding_service不可用，embedding功能将不可用
+try:
+    from embedding_service import get_embedding_service
+    EMBEDDING_AVAILABLE = True
+except ImportError:
+    EMBEDDING_AVAILABLE = False
+    get_embedding_service = None
 
 # 配置日志
 logger = logging.getLogger(__name__)
@@ -107,9 +114,17 @@ class AIService:
                 logger.debug(f"[AI] 检查embedding: type={type(embedding)}, is None={embedding is None}")
                 if embedding is not None:  # 修复：不能直接用if embedding判断数组
                     logger.info(f"[AI] embedding存在，开始转换: {type(embedding)}")
-                    embedding_service = get_embedding_service()
-                    embedding_array = embedding_service.list_to_embedding(embedding)
-                    logger.info(f"[AI] embedding转换完成: type={type(embedding_array)}, shape={embedding_array.shape if hasattr(embedding_array, 'shape') else 'N/A'}")
+                    if EMBEDDING_AVAILABLE and get_embedding_service is not None:
+                        try:
+                            embedding_service = get_embedding_service()
+                            if embedding_service is not None:
+                                embedding_array = embedding_service.list_to_embedding(embedding)
+                                logger.info(f"[AI] embedding转换完成: type={type(embedding_array)}, shape={embedding_array.shape if hasattr(embedding_array, 'shape') else 'N/A'}")
+                        except Exception as e:
+                            logger.warning(f"[AI] embedding转换失败: {e}")
+                            embedding_array = None
+                    else:
+                        embedding_array = None
                 else:
                     logger.debug("[AI] embedding为None，跳过Embedding查找")
                 

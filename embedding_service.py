@@ -7,9 +7,17 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 import requests
-import torch
-from sentence_transformers import SentenceTransformer
 from functools import lru_cache
+
+# 可选导入：如果torch未安装，embedding功能将不可用
+try:
+    import torch
+    from sentence_transformers import SentenceTransformer
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
+    SentenceTransformer = None
 
 
 class EmbeddingService:
@@ -26,11 +34,17 @@ class EmbeddingService:
         """
         self.model_name = model_name
         self.model = None
+        if not TORCH_AVAILABLE:
+            print("⚠️ torch未安装，embedding功能不可用")
+            return
         self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
         self._load_model()
     
     def _load_model(self):
         """加载模型（延迟加载，只在需要时加载）"""
+        if not TORCH_AVAILABLE:
+            self.model = None
+            return
         if self.model is None:
             print(f"正在加载Embedding模型: {self.model_name} (设备: {self.device})")
             try:

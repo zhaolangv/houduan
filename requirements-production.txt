@@ -1,0 +1,35 @@
+# 生产环境依赖（精简版，用于Railway部署）
+# 已移除torch等大型依赖，镜像大小约 < 500MB
+
+# 核心框架
+flask==3.0.0
+flask-sqlalchemy==3.1.1
+gunicorn>=21.2.0
+flask-cors>=4.0.0
+
+# 数据库
+psycopg2-binary==2.9.9
+python-dotenv==1.0.0
+
+# 图片处理（轻量级）
+Pillow==10.1.0
+imagehash==4.3.1
+
+# HTTP请求
+requests==2.31.0
+
+# AI服务
+openai==2.8.1
+
+# 云存储
+supabase>=2.0.0
+
+# 注意：以下大型依赖已移除（如需使用embedding功能，请升级Railway计划）
+# sentence-transformers==2.2.2  # 约2GB
+# torch>=2.2.0,<3.0.0  # 约3-4GB
+# torchvision>=0.17.0,<1.0.0  # 约500MB
+# numpy>=1.24.0,<2.0.0  # 已包含在其他包中
+
+# 其他可选依赖（已注释）
+# pymysql>=1.1.0  # MySQL驱动（如果不需要可以删除）
+# tkinterdnd2==0.3.0  # GUI库，服务器不需要
