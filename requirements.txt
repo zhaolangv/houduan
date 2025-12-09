@@ -7,11 +7,14 @@ python-dotenv==1.0.0
 openai==2.8.1
 psycopg2-binary==2.9.9
 pymysql>=1.1.0  # MySQL数据库驱动（备选方案）
-sentence-transformers==2.2.2
-torch>=2.2.0,<3.0.0  # 更新为可用版本（2.1.0已不可用）
-torchvision>=0.17.0,<1.0.0  # 与torch版本兼容
-numpy>=1.24.0,<2.0.0  # 使用更灵活的版本约束
-tkinterdnd2==0.3.0
+# 以下大型依赖已注释（镜像大小约6-7GB，超过Railway 4GB限制）
+# 如果不需要embedding功能，可以保持注释
+# 如果需要embedding功能，请升级Railway计划或使用其他平台
+# sentence-transformers==2.2.2  # 约2GB
+# torch>=2.2.0,<3.0.0  # 约3-4GB
+# torchvision>=0.17.0,<1.0.0  # 约500MB
+# numpy>=1.24.0,<2.0.0  # 已包含在其他包中，如果不需要torch可以删除
+# tkinterdnd2==0.3.0  # GUI库，仅用于本地GUI应用，服务器部署不需要
 supabase>=2.0.0  # Supabase存储服务（可选，用于上传图片到云端）
 gunicorn>=21.2.0  # 生产环境WSGI服务器（必需）
 flask-cors>=4.0.0  # CORS支持（可选，用于跨域请求）
